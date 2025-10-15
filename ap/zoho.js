@@ -1,1 +1,15 @@
+export default async function handler(req, res) {
+  const fetch = (await import("node-fetch")).default;
+
+  const response = await fetch("https://www.zohoapis.com/books/v3/invoices?organization_id=822181064", {
+    headers: {
+      "Authorization": "Zoho-oauthtoken 1000.7f4d291375e86e9fd0f300282f9ce76b.2540c2eec21300296c68e70ba9de9a9b",
+      "X-com-zoho-organizationid": "822181064",
+      "Content-Type": "application/json"
+    }
+  });
+
+  const data = await response.json();
+  res.status(200).json(data);
+}
 
