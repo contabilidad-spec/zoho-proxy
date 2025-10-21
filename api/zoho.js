@@ -4,7 +4,7 @@ let tokenExpiration = 0;
 export default async function handler(req, res) {
   const fetch = (await import("node-fetch")).default;
 
-  // 🔧 Configuración (usa variables de entorno seguras en Vercel)
+  // 🔧 Configuración segura
   const client_id = process.env.ZOHO_CLIENT_ID || "1000.X6UCOBBOSTCDOKO5VB1OJMQTLTDM3N";
   const client_secret = process.env.ZOHO_CLIENT_SECRET || "3b8917fe9f770011f5bca81a9fb90f370d1df9cce6";
   const refresh_token = process.env.ZOHO_REFRESH_TOKEN || "1000.0778e3dd50843a6cdf6db0d997030c1a.c7fc2e17e9e16622d584658ce07fc4a5";
@@ -13,7 +13,7 @@ export default async function handler(req, res) {
   const module = req.query.module || "Invoices";
 
   try {
-    // 1️⃣ Obtener o renovar token
+    // 1️⃣ Token: renovar si expira
     const now = Date.now();
     if (!cachedToken || now > tokenExpiration) {
       console.log("🔑 Solicitando nuevo token...");
@@ -35,12 +35,12 @@ export default async function handler(req, res) {
       }
 
       cachedToken = tokenData.access_token;
-      tokenExpiration = now + 55 * 60 * 1000; // renovar cada 55 min
+      tokenExpiration = now + 55 * 60 * 1000;
     }
 
     const access_token = cachedToken;
 
-    // 2️⃣ Endpoints de Zoho
+    // 2️⃣ Endpoints soportados
     const endpoints = {
       Bills: "bills",
       BillLineItems: "bills",
@@ -63,7 +63,8 @@ export default async function handler(req, res) {
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 100) {
+    while (hasMore && page <= 5) {
+      console.log(`📄 Descargando página ${page} del módulo ${module}...`);
       const apiUrl = `https://www.zohoapis.com/books/v3/${endpoint}?organization_id=${organization_id}&page=${page}&per_page=200`;
 
       const response = await fetch(apiUrl, {
@@ -79,44 +80,51 @@ export default async function handler(req, res) {
       try {
         data = JSON.parse(text);
       } catch {
-        console.error("⚠️ Respuesta no JSON:", text.slice(0, 200));
+        console.error("⚠️ Respuesta no JSON recibida:", text.slice(0, 200));
         return res.status(500).json({ error: "Respuesta no válida desde Zoho", raw: text.slice(0, 200) });
       }
 
       const arrayKey = Object.keys(data).find(k => Array.isArray(data[k]));
-      if (!arrayKey) break;
+      if (!arrayKey) {
+        console.log("⚠️ No se encontraron datos válidos en la respuesta:", data);
+        break;
+      }
 
       allData = [...allData, ...data[arrayKey]];
       hasMore = data.page_context?.has_more_page === true;
       page++;
     }
 
-    // 4️⃣ Si es un módulo de line items, expandirlos (tabla plana)
+    console.log(`✅ Descargados ${allData.length} registros del módulo ${module}`);
+
+    // 4️⃣ Depuración especial para ver line_items
     if (module.endsWith("LineItems")) {
-      const expanded = allData.flatMap(doc =>
-        (doc.line_items || []).map(line => ({
+      console.log("🧩 Modo depuración LineItems: analizando contenido...");
+      const docsWithLines = allData.filter(d => d.line_items && d.line_items.length > 0);
+      console.log(`📊 Documentos con line_items: ${docsWithLines.length} de ${allData.length}`);
+
+      if (docsWithLines[0]) {
+        console.log("📋 Ejemplo de line_items[0]:", docsWithLines[0].line_items[0]);
+      } else {
+        console.log("⚠️ Ningún documento contiene line_items");
+      }
+
+      const expanded = docsWithLines.flatMap(doc =>
+        doc.line_items.map(line => ({
           parent_id: doc.bill_id || doc.invoice_id || doc.salesorder_id || doc.purchaseorder_id,
           parent_number: doc.bill_number || doc.invoice_number || doc.salesorder_number || doc.purchaseorder_number,
-          parent_date: doc.date || doc.created_time,
+          date: doc.date || doc.created_time,
           customer_name: doc.customer_name || doc.vendor_name,
-          line_item_id: line.line_item_id,
-          item_id: line.item_id,
-          item_name: line.name,
-          description: line.description,
-          quantity: line.quantity,
-          rate: line.rate,
-          discount: line.discount,
-          tax_name: line.tax_name,
-          tax_percentage: line.tax_percentage,
-          total: line.item_total,
+          ...line,
         }))
       );
 
-      return res.status(200).json(expanded);
+      return res.status(200).json({ module, count: expanded.length, data: expanded });
     }
 
-    // 5️⃣ Si no es line items, devolver tabla directa
-    return res.status(200).json(allData);
+    // 5️⃣ Respuesta general
+    return res.status(200).json({ module, count: allData.length, data: allData });
+
   } catch (error) {
     console.error("💥 Error interno:", error);
     return res.status(500).json({ error: error.message, stack: error.stack });
