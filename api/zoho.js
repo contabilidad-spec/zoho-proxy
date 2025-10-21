@@ -4,7 +4,7 @@ let tokenExpiration = 0;
 export default async function handler(req, res) {
   const fetch = (await import("node-fetch")).default;
 
-  // 🔧 Configuración segura
+  // 🔧 Configuración
   const client_id = process.env.ZOHO_CLIENT_ID || "1000.X6UCOBBOSTCDOKO5VB1OJMQTLTDM3N";
   const client_secret = process.env.ZOHO_CLIENT_SECRET || "3b8917fe9f770011f5bca81a9fb90f370d1df9cce6";
   const refresh_token = process.env.ZOHO_REFRESH_TOKEN || "1000.0778e3dd50843a6cdf6db0d997030c1a.c7fc2e17e9e16622d584658ce07fc4a5";
@@ -13,10 +13,10 @@ export default async function handler(req, res) {
   const module = req.query.module || "Invoices";
 
   try {
-    // 1️⃣ Token: renovar si expira
+    // 1️⃣ Obtener o renovar el token automáticamente
     const now = Date.now();
     if (!cachedToken || now > tokenExpiration) {
-      console.log("🔑 Solicitando nuevo token...");
+      console.log("🔑 Renovando token de Zoho...");
       const tokenResponse = await fetch("https://accounts.zoho.com/oauth/v2/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -35,12 +35,12 @@ export default async function handler(req, res) {
       }
 
       cachedToken = tokenData.access_token;
-      tokenExpiration = now + 55 * 60 * 1000;
+      tokenExpiration = now + 55 * 60 * 1000; // Renovar antes de 1 h
     }
 
     const access_token = cachedToken;
 
-    // 2️⃣ Endpoints soportados
+    // 2️⃣ Endpoints principales
     const endpoints = {
       Bills: "bills",
       BillLineItems: "bills",
@@ -58,13 +58,12 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: `El módulo '${module}' no está soportado.` });
     }
 
-    // 3️⃣ Descarga con paginación
+    // 3️⃣ Descarga paginada de encabezados
     let allData = [];
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 5) {
-      console.log(`📄 Descargando página ${page} del módulo ${module}...`);
+    while (hasMore && page <= 50) {
       const apiUrl = `https://www.zohoapis.com/books/v3/${endpoint}?organization_id=${organization_id}&page=${page}&per_page=200`;
 
       const response = await fetch(apiUrl, {
@@ -75,56 +74,65 @@ export default async function handler(req, res) {
         },
       });
 
-      const text = await response.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.error("⚠️ Respuesta no JSON recibida:", text.slice(0, 200));
-        return res.status(500).json({ error: "Respuesta no válida desde Zoho", raw: text.slice(0, 200) });
-      }
+      const data = await response.json();
 
       const arrayKey = Object.keys(data).find(k => Array.isArray(data[k]));
-      if (!arrayKey) {
-        console.log("⚠️ No se encontraron datos válidos en la respuesta:", data);
-        break;
-      }
+      if (!arrayKey) break;
 
       allData = [...allData, ...data[arrayKey]];
       hasMore = data.page_context?.has_more_page === true;
       page++;
     }
 
-    console.log(`✅ Descargados ${allData.length} registros del módulo ${module}`);
-
-    // 4️⃣ Depuración especial para ver line_items
+    // 4️⃣ Si es módulo LineItems → obtener los ítems detallados
     if (module.endsWith("LineItems")) {
-      console.log("🧩 Modo depuración LineItems: analizando contenido...");
-      const docsWithLines = allData.filter(d => d.line_items && d.line_items.length > 0);
-      console.log(`📊 Documentos con line_items: ${docsWithLines.length} de ${allData.length}`);
+      let allLineItems = [];
 
-      if (docsWithLines[0]) {
-        console.log("📋 Ejemplo de line_items[0]:", docsWithLines[0].line_items[0]);
-      } else {
-        console.log("⚠️ Ningún documento contiene line_items");
+      for (const doc of allData) {
+        const id =
+          doc.bill_id ||
+          doc.invoice_id ||
+          doc.purchaseorder_id ||
+          doc.salesorder_id;
+
+        if (!id) continue;
+
+        const detailUrl = `https://www.zohoapis.com/books/v3/${endpoint}/${id}?organization_id=${organization_id}`;
+
+        const detailResp = await fetch(detailUrl, {
+          headers: {
+            Authorization: `Zoho-oauthtoken ${access_token}`,
+            "X-com-zoho-organizationid": organization_id,
+            "Content-Type": "application/json",
+          },
+        });
+
+        const detailData = await detailResp.json();
+
+        const mainKey = endpoint.slice(0, -1); // e.g. "invoices" -> "invoice"
+        const record = detailData[mainKey];
+        if (!record?.line_items) continue;
+
+        const lines = record.line_items.map(line => ({
+          parent_id: id,
+          parent_number:
+            record.invoice_number ||
+            record.bill_number ||
+            record.salesorder_number ||
+            record.purchaseorder_number,
+          date: record.date || record.created_time,
+          customer_name: record.customer_name || record.vendor_name,
+          ...line,
+        }));
+
+        allLineItems = [...allLineItems, ...lines];
       }
 
-      const expanded = docsWithLines.flatMap(doc =>
-        doc.line_items.map(line => ({
-          parent_id: doc.bill_id || doc.invoice_id || doc.salesorder_id || doc.purchaseorder_id,
-          parent_number: doc.bill_number || doc.invoice_number || doc.salesorder_number || doc.purchaseorder_number,
-          date: doc.date || doc.created_time,
-          customer_name: doc.customer_name || doc.vendor_name,
-          ...line,
-        }))
-      );
-
-      return res.status(200).json({ module, count: expanded.length, data: expanded });
+      return res.status(200).json({ module, count: allLineItems.length, data: allLineItems });
     }
 
-    // 5️⃣ Respuesta general
+    // 5️⃣ Si no son LineItems, devolver encabezados
     return res.status(200).json({ module, count: allData.length, data: allData });
-
   } catch (error) {
     console.error("💥 Error interno:", error);
     return res.status(500).json({ error: error.message, stack: error.stack });
