@@ -35,17 +35,17 @@ export default async function handler(req, res) {
       }
 
       cachedToken = tokenData.access_token;
-      tokenExpiration = now + 55 * 60 * 1000; // 55 min para renovar antes de expirar
+      tokenExpiration = now + 55 * 60 * 1000; // renovar cada 55 min
     }
 
     const access_token = cachedToken;
 
-    // 2️⃣ Mapeo de endpoints Zoho
+    // 2️⃣ Endpoints de Zoho
     const endpoints = {
       Bills: "bills",
       BillLineItems: "bills",
       Invoices: "invoices",
-      InvoiceLineItems: "invoiceslineitems",
+      InvoiceLineItems: "invoices",
       Items: "items",
       PurchaseOrders: "purchaseorders",
       PurchaseOrderLineItems: "purchaseorders",
@@ -63,8 +63,7 @@ export default async function handler(req, res) {
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 50) {
-      console.log(`📄 Descargando página ${page} del módulo ${module}...`);
+    while (hasMore && page <= 100) {
       const apiUrl = `https://www.zohoapis.com/books/v3/${endpoint}?organization_id=${organization_id}&page=${page}&per_page=200`;
 
       const response = await fetch(apiUrl, {
@@ -80,43 +79,46 @@ export default async function handler(req, res) {
       try {
         data = JSON.parse(text);
       } catch {
-        console.error("⚠️ Respuesta no JSON recibida:", text.slice(0, 200));
+        console.error("⚠️ Respuesta no JSON:", text.slice(0, 200));
         return res.status(500).json({ error: "Respuesta no válida desde Zoho", raw: text.slice(0, 200) });
       }
 
       const arrayKey = Object.keys(data).find(k => Array.isArray(data[k]));
-      if (!arrayKey) {
-        console.log("⚠️ No se encontraron datos válidos en la respuesta:", data);
-        break;
-      }
+      if (!arrayKey) break;
 
       allData = [...allData, ...data[arrayKey]];
       hasMore = data.page_context?.has_more_page === true;
       page++;
     }
 
-    // 4️⃣ Si son LineItems, expandirlos
+    // 4️⃣ Si es un módulo de line items, expandirlos (tabla plana)
     if (module.endsWith("LineItems")) {
-      const expanded = allData.flatMap(doc => {
-        if (!doc.line_items) return [];
-        return doc.line_items.map(line => ({
+      const expanded = allData.flatMap(doc =>
+        (doc.line_items || []).map(line => ({
           parent_id: doc.bill_id || doc.invoice_id || doc.salesorder_id || doc.purchaseorder_id,
           parent_number: doc.bill_number || doc.invoice_number || doc.salesorder_number || doc.purchaseorder_number,
-          date: doc.date || doc.created_time,
+          parent_date: doc.date || doc.created_time,
           customer_name: doc.customer_name || doc.vendor_name,
-          ...line,
-        }));
-      });
+          line_item_id: line.line_item_id,
+          item_id: line.item_id,
+          item_name: line.name,
+          description: line.description,
+          quantity: line.quantity,
+          rate: line.rate,
+          discount: line.discount,
+          tax_name: line.tax_name,
+          tax_percentage: line.tax_percentage,
+          total: line.item_total,
+        }))
+      );
 
-      return res.status(200).json({ module, count: expanded.length, data: expanded });
+      return res.status(200).json(expanded);
     }
 
-    // 5️⃣ Respuesta final
-    return res.status(200).json({ module, count: allData.length, data: allData });
-
+    // 5️⃣ Si no es line items, devolver tabla directa
+    return res.status(200).json(allData);
   } catch (error) {
     console.error("💥 Error interno:", error);
     return res.status(500).json({ error: error.message, stack: error.stack });
   }
 }
-
