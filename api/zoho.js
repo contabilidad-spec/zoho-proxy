@@ -43,15 +43,15 @@ export default async function handler(req, res) {
 
     // 2️⃣ Definir los endpoints por módulo
     const endpoints = {
-      Bills: "bills",
-      BillLineItems: "bills",
-      Invoices: "invoices",
-      InvoiceLineItems: "invoices",
-      Items: "items",
-      PurchaseOrders: "purchaseorders",
-      PurchaseOrderLineItems: "purchaseorders",
-      SalesOrders: "salesorders",
-      SalesOrderLineItems: "salesorders",
+      Bills: "Bills",
+      BillLineItems: "Bills",
+      Invoices: "Invoices",
+      InvoiceLineItems: "Invoices",
+      Items: "Items",
+      PurchaseOrders: "Purchaseorders",
+      PurchaseOrderLineItems: "Purchaseorders",
+      SalesOrders: "SalesOrders",
+      SalesOrderLineItems: "SalesOrders",
     };
 
     const endpoint = endpoints[module];
@@ -128,3 +128,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: error.message, stack: error.stack });
   }
 }
+
