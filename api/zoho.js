@@ -6,7 +6,7 @@ export default async function handler(req, res) {
 
   const client_id = "1000.X6UCOBBOSTCDOKO5VB1OJMQTLTDM3N";
   const client_secret = "3b8917fe9f770011f5bca81a9fb90f370d1df9cce6";
-  const refresh_token = "1000.0778e3dd50843a6cdf6db0d997030c1a.c7fc2e17e9e16622d584658ce07fc4a5";
+  const refresh_token = "{{access_token}}";
   const organization_id = "822181064";
 
   try {
@@ -72,3 +72,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: error.message });
   }
 }
+
