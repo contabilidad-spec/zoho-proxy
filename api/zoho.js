@@ -45,7 +45,7 @@ export default async function handler(req, res) {
       Bills: "bills",
       BillLineItems: "bills",
       Invoices: "invoices",
-      InvoiceLineItems: "invoices",
+      InvoiceLineItems: "invoiceslineitems",
       Items: "items",
       PurchaseOrders: "purchaseorders",
       PurchaseOrderLineItems: "purchaseorders",
@@ -119,3 +119,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: error.message, stack: error.stack });
   }
 }
+
